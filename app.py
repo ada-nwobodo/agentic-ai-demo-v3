@@ -5,14 +5,14 @@ from sklearn.metrics.pairwise import linear_kernel
 
 st.set_page_config(page_title="Medical History Search (Demo)", layout="wide")
 
-# --- Sidebar: patient context ---
+# ---------------- Sidebar: patient context ----------------
 st.sidebar.header("Patient")
 demo_structured = dict(
     name="Jane Doe", sex="F", dob="1952-08-20",
     problems=["AF (paroxysmal)", "CAD s/p CABG (2018)"],
-    meds=["Apixaban 5 mg BID", "Metoprolol 50 mg BID", "Atorvastatin 40 mg nocte"],
+    meds=["Apixaban 5 mg BD", "Metoprolol 50 mg BD", "Atorvastatin 40 mg nocte"],
     allergies=["Amoxicillin – rash (remote)"],
-    vitals=dict(hr=78, bp="128/72", spo2="97% RA"),
+    observations=dict(hr=78, bp="128/72", spo2="97% RA"),
 )
 st.sidebar.write(f"**{demo_structured['name']}**  \n{demo_structured['sex']} • DOB {demo_structured['dob']}")
 st.sidebar.write("**Problems**:", "; ".join(demo_structured["problems"]))
@@ -23,7 +23,7 @@ st.sidebar.write("**Vitals**:", f"HR {demo_structured['vitals']['hr']}, BP {demo
 st.sidebar.markdown("---")
 uploaded = st.sidebar.file_uploader("Upload de-identified notes CSV (date,source,text)", type=["csv"])
 
-# --- Load notes (use demo set if none uploaded) ---
+# ---------------- Load notes (demo set if none uploaded) ----------------
 if uploaded is not None:
     df = pd.read_csv(uploaded)
 else:
@@ -42,23 +42,37 @@ else:
              text="CABG ×3: LIMA-LAD, SVG-OM, SVG-PDA."),
     ])
 
+# ---- Add a PMH summary note so search can cite it ----
+PMH_ITEMS = [
+    "Ischaemic heart disease (IHD)",
+    "Heart failure",
+    "Hypertension (HBP)",
+    "Mitral valve disease",
+    "History of binge drinking for the last 10 years",
+]
+pmh_text = "Previous medical history: " + "; ".join(PMH_ITEMS) + "."
+df = pd.concat([
+    df,
+    pd.DataFrame([{"date": "2024-01-05", "source": "Problem list / PMH summary", "text": pmh_text}])
+], ignore_index=True)
+
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df["age_days"] = (dt.datetime.now() - df["date"]).dt.days
 
-# --- Vectorize once ---
+# ---------------- Search index ----------------
 @st.cache_data(show_spinner=False)
 def build_index(texts):
     vec = TfidfVectorizer(stop_words="english")
-    X = vec.fit_transform(texts)
+    X = vec.fit_transform(texts.fillna(""))
     return vec, X
 
-vectorizer, X = build_index(df["text"].fillna(""))
+vectorizer, X = build_index(df["text"])
 
 def search(query, k=6, half_life_days=365):
     q = vectorizer.transform([query])
     sims = linear_kernel(q, X).ravel()
     recency = 0.5 ** (df["age_days"].fillna(3650) / half_life_days)
-    score = sims * (0.2 + 0.8*recency)  # keep content weight + boost recent
+    score = sims * (0.2 + 0.8*recency)
     out = df.assign(score=score).sort_values("score", ascending=False)
     return out[out["score"] > 0].head(k)
 
@@ -67,8 +81,32 @@ def highlight(text, terms):
     pattern = r'(' + '|'.join(map(re.escape, terms)) + r')'
     return re.sub(pattern, r'**\1**', text, flags=re.I)
 
-# --- UI ---
+# ---------------- UI ----------------
 st.title("Medical History Search (Demo)")
+
+# ---- NEW: Previous Medical History section (appears ABOVE general ask) ----
+with st.container():
+    st.subheader("Previous Medical History (PMH)")
+    pmh_prompt = st.text_input(
+        "Ask for previous medical history of the patient",
+        placeholder="e.g., 'previous medical history' or 'PMH'",
+        key="pmh_query"
+    )
+    colA, colB = st.columns([1,3])
+    with colA:
+        show_pmh = st.button("Show PMH")
+    with colB:
+        st.caption("Includes IHD, heart failure, hypertension, mitral valve disease, and a 10-year history of binge drinking.")
+
+    if pmh_prompt.strip() or show_pmh:
+        st.success("Previous medical history")
+        st.markdown("\n".join([f"- {item}" for item in PMH_ITEMS]))
+        # Also show the PMH summary “citation” entry so it feels like the chart
+        st.caption("_Problem list / PMH summary • 2024-01-05_")
+
+st.markdown("---")
+
+# ---- Ask the chart (general search) ----
 query = st.text_input("Ask the chart (e.g., 'When was the CABG?', 'Any contrast reactions?', 'Why apixaban?')", "")
 
 col_ans, col_tl = st.columns([2,1])
@@ -94,3 +132,6 @@ with col_tl:
 
 st.markdown("---")
 st.caption("Demo only. Verify findings in source notes before clinical decisions.")
+
+
+
