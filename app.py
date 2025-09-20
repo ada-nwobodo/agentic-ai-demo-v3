@@ -12,7 +12,7 @@ demo_structured = dict(
     problems=["AF (paroxysmal)", "CAD s/p CABG (2018)"],
     meds=["Apixaban 5 mg BD", "Metoprolol 50 mg BD", "Atorvastatin 40 mg nocte"],
     allergies=["Amoxicillin – rash (remote)"],
-    observations=dict(hr=78, bp="128/72", spo2="97% RA"),
+    vitals=dict(hr=78, bp="128/72", spo2="97% RA"),
 )
 st.sidebar.write(f"**{demo_structured['name']}**  \n{demo_structured['sex']} • DOB {demo_structured['dob']}")
 st.sidebar.write("**Problems**:", "; ".join(demo_structured["problems"]))
