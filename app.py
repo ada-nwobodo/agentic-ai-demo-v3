@@ -7,6 +7,11 @@ import re
 import datetime as dt
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
+import os, tempfile, io
+import wfdb
+import numpy as np
+import matplotlib.pyplot as plt
+import neurokit2 as nk
 
 st.set_page_config(page_title="Medical History Search (Demo)", layout="wide")
 
@@ -117,6 +122,229 @@ if st.session_state.show_pmh:
     st.caption("_Problem list / PMH summary • 2024-01-05_")
 
 st.markdown("---")
+
+
+# ===================== 12-lead ECG Rhythm Check (upload & vet) =====================
+
+st.subheader("12-lead ECG rhythm check")
+
+st.caption("Upload a WFDB record (.hea + .dat). We'll render a 3×4 ECG with a full lead II rhythm strip, "
+           "estimate the rhythm, and (if present) compare to a trusted label in the header (e.g., '#Dx:' from PTB-XL).")
+
+col_u1, col_u2 = st.columns(2)
+with col_u1:
+    f_hea = st.file_uploader("Header (.hea)", type=["hea"], key="ecg_hea")
+with col_u2:
+    f_dat = st.file_uploader("Signal (.dat)", type=["dat"], key="ecg_dat")
+
+def _save_temp_pair(fhea, fdat):
+    """Save uploaded WFDB pair to a temp folder and return (tmpdir, record_name_base)."""
+    tmpdir = tempfile.mkdtemp()
+    # Attempt to derive record_name from .hea filename
+    rec_base = os.path.splitext(fhea.name)[0] if fhea else "uploaded"
+    hea_path = os.path.join(tmpdir, f"{rec_base}.hea")
+    dat_path = os.path.join(tmpdir, f"{rec_base}.dat")
+    with open(hea_path, "wb") as out:
+        out.write(fhea.read())
+    with open(dat_path, "wb") as out:
+        out.write(fdat.read())
+    return tmpdir, rec_base
+
+def _units_to_mV(signal, units):
+    """Convert per-channel units to mV."""
+    scale = np.ones(signal.shape[1], dtype=float)
+    if units:
+        for i, u in enumerate(units):
+            if not u:
+                continue
+            ul = u.replace("µ","u").lower()
+            if ul == "uv": scale[i] = 1e-3
+            elif ul == "mv": scale[i] = 1.0
+            elif ul == "v": scale[i] = 1e3
+            else: scale[i] = 1.0
+    return signal * scale
+
+def _lead_index(sig_names, target):
+    # robust caseless matching for I, II, III, aVR/AVL/AVF, V1–V6
+    aliases = {
+        "I": ["i","lead i","leadi"], "II": ["ii","lead ii","leadii"], "III": ["iii","lead iii","leadiii"],
+        "aVR": ["avr","vr"], "aVL": ["avl","vl"], "aVF": ["avf","vf"],
+        "V1":["v1"],"V2":["v2"],"V3":["v3"],"V4":["v4"],"V5":["v5"],"V6":["v6"]
+    }
+    names = [s.lower().strip() for s in sig_names]
+    for cand in [target] + aliases.get(target, []):
+        c = cand.lower()
+        for i, n in enumerate(names):
+            if n == c:
+                return i
+    return None
+
+def _plot_3x4_with_rhythm(rec, sig_mV):
+    fs = rec.fs
+    sig_names = rec.sig_name
+    layout = [
+        ["I","aVR","V1","V4"],
+        ["II","aVL","V2","V5"],
+        ["III","aVF","V3","V6"],
+    ]
+    mm_per_mV = 10
+    seg_len = 2.5
+    samples_seg = int(seg_len * fs)
+    t_seg = np.arange(samples_seg) / fs
+    row_h = 2.5 * mm_per_mV
+    total_w = seg_len * 4
+
+    fig = plt.figure(figsize=(12, 7))
+    ax = plt.gca()
+    ax.axis("off")
+
+    # grid (full page)
+    ymin = -(3 * row_h + 1.5 * mm_per_mV)
+    ymax = 3 * mm_per_mV
+    def grid(xmax, ymin, ymax):
+        for x in np.arange(0, total_w+1e-6, 0.04): ax.axvline(x, color="pink", lw=0.3, zorder=0)
+        for y in np.arange(ymin, ymax+1e-6, 0.1*mm_per_mV): ax.axhline(y, color="pink", lw=0.3, zorder=0)
+        for x in np.arange(0, total_w+1e-6, 0.2): ax.axvline(x, color="red", lw=0.6, zorder=0)
+        for y in np.arange(ymin, ymax+1e-6, 0.5*mm_per_mV): ax.axhline(y, color="red", lw=0.6, zorder=0)
+    grid(total_w, ymin, ymax)
+
+    # 3×4 leads (consecutive non-overlapping 2.5 s per column)
+    for r in range(3):
+        for c in range(4):
+            lead = layout[r][c]
+            idx = _lead_index(sig_names, lead)
+            if idx is None: continue
+            start = c * samples_seg
+            end = min(start + samples_seg, sig_mV.shape[0])
+            x = t_seg[:(end-start)] + c * seg_len
+            y = sig_mV[start:end, idx] * mm_per_mV
+            yoff = -(r * row_h)
+            ax.plot(x, y + yoff, lw=1)
+            if c == 0:
+                ax.text(-0.25, yoff, lead, fontsize=9, ha="right", va="center", weight="bold")
+            else:
+                ax.text(c * seg_len + 0.08, yoff + 0.8*mm_per_mV, lead, fontsize=9, ha="left", va="center", weight="bold")
+
+    # rhythm strip (lead II, 10 s)
+    idx_ii = _lead_index(sig_names, "II")
+    if idx_ii is not None:
+        n_r = min(int(10 * fs), sig_mV.shape[0])
+        xr = np.arange(n_r) / fs
+        yr = sig_mV[:n_r, idx_ii] * mm_per_mV
+        yoff = -(3 * row_h)
+        ax.plot(xr, yr + yoff, lw=1)
+        ax.text(-0.25, yoff, "II", fontsize=9, ha="right", va="center", weight="bold")
+
+    # calibration pulse
+    cal_x = [0, 0, 0.2, 0.2]
+    cal_y = [0, 1*mm_per_mV, 1*mm_per_mV, 0]
+    ax.plot(cal_x, np.array(cal_y) + 1.6*mm_per_mV, lw=1)
+
+    ax.set_xlim(0, total_w); ax.set_ylim(ymin, ymax)
+    ax.set_title("12-Lead ECG – 3×4 layout + Lead II rhythm (25 mm/s, 10 mm/mV)", fontsize=12)
+    return fig
+
+def _rhythm_inference(lead_ii, fs):
+    """
+    Lightweight rhythm suggestion:
+      - R-peaks → HR, regularity (SDNN, RMSSD, CV)
+      - QRS width (from delineation) for 'narrow' vs 'wide'
+      - Simple rules → sinus / sinus tachy / probable AF / indeterminate
+    """
+    cleaned = nk.ecg_clean(lead_ii, sampling_rate=fs, method="neurokit")
+    # R-peaks
+    _, info = nk.ecg_peaks(cleaned, sampling_rate=fs)
+    rpeaks = info.get("ECG_R_Peaks", [])
+    if len(rpeaks) < 6:
+        return dict(label="Indeterminate", details="Insufficient R-peaks detected")
+
+    rr = np.diff(rpeaks) / fs
+    hr = 60.0 / np.clip(rr, 1e-6, None)
+    mean_hr = float(np.nanmean(hr))
+    sdnn = float(np.nanstd(rr))
+    cv_rr = float(np.nanstd(rr) / (np.nanmean(rr) + 1e-6))
+    rmssd = float(np.sqrt(np.nanmean(np.square(np.diff(rr)))))
+
+    # Delineation (rough QRS width)
+    try:
+        sigdict = nk.ecg_delineate(cleaned, rpeaks=info, sampling_rate=fs, method="dwt")
+        q_on = sigdict["ECG_Q_Peaks"]
+        s_off = sigdict["ECG_S_Peaks"]
+        widths = []
+        for q, s in zip(q_on, s_off):
+            if q is not None and s is not None and s > q:
+                widths.append((s - q) / fs)
+        qrs_ms = float(np.nanmedian(widths) * 1000) if widths else np.nan
+    except Exception:
+        qrs_ms = np.nan
+
+    # Simple rules (demo only, not diagnostic)
+    label = "Indeterminate"
+    if not np.isnan(mean_hr):
+        if (cv_rr < 0.10) and (60 <= mean_hr <= 100) and (np.isnan(qrs_ms) or qrs_ms < 120):
+            label = "Sinus rhythm (likely)"
+        elif (cv_rr < 0.10) and (mean_hr > 100) and (np.isnan(qrs_ms) or qrs_ms < 120):
+            label = "Sinus tachycardia (likely)"
+        elif (cv_rr >= 0.12) and (np.isnan(qrs_ms) or qrs_ms < 120):
+            label = "Atrial fibrillation (probable)"
+        # you can add more rules (e.g., wide QRS + regular → VT vs SVT with aberrancy)
+
+    details = (f"HR≈{mean_hr:.0f} bpm, RR-CV={cv_rr:.2f}, SDNN={sdnn:.3f}s, RMSSD={rmssd:.3f}s, "
+               f"QRS≈{qrs_ms:.0f} ms")
+    return dict(label=label, details=details)
+
+# ----- Run if both files provided -----
+if f_hea and f_dat:
+    try:
+        tmpdir, rec_base = _save_temp_pair(f_hea, f_dat)
+        rec = wfdb.rdrecord(os.path.join(tmpdir, rec_base))
+        sig = rec.p_signal
+        sig_mV = _units_to_mV(sig, getattr(rec, "sig_units", None))
+
+        # Plot ECG
+        fig = _plot_3x4_with_rhythm(rec, sig_mV)
+        st.pyplot(fig, use_container_width=True)
+
+        # Rhythm suggestion from lead II
+        idx_ii = _lead_index(rec.sig_name, "II")
+        if idx_ii is not None:
+            rr_res = _rhythm_inference(sig_mV[:, idx_ii], rec.fs)
+            st.success(f"Rhythm suggestion: **{rr_res['label']}**")
+            st.caption(rr_res["details"])
+        else:
+            st.info("Lead II not found; rhythm suggestion skipped.")
+
+        # Trusted source (header) — show Dx/diagnosis if present
+        trusted = None
+        hdr = wfdb.rdheader(os.path.join(tmpdir, rec_base))
+        # Many PhysioNet/PTB-XL headers place labels in comment lines
+        if hasattr(hdr, "comments") and hdr.comments:
+            for line in hdr.comments:
+                if "dx" in line.lower() or "diagnos" in line.lower():
+                    trusted = line.strip()
+                    break
+        with st.expander("Trusted source (from header)"):
+            if trusted:
+                st.write(trusted)
+            else:
+                st.write("No diagnosis label found in header comments.")
+
+        # Agreement (very naive string match for demo)
+        if trusted:
+            tl = trusted.lower()
+            guess = rr_res["label"].lower()
+            if ("fib" in tl and "fibrillation" in guess) or \
+               ("sinus" in tl and "sinus" in guess):
+                st.success("Agreement with trusted label (coarse match).")
+            else:
+                st.warning("Prediction and trusted label may differ—review visually.")
+
+        st.caption("Demo only — not for clinical use. Validate against source ECG and clinical context.")
+    except Exception as e:
+        st.error(f"Failed to process ECG: {e}")
+else:
+    st.info("Upload both .hea and .dat files to run the rhythm check.")
+
 
 # ===================== Ask the chart (general search) =====================
 query = st.text_input(
