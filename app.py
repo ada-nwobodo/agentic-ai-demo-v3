@@ -1,5 +1,10 @@
+# app.py — Medical History Search (Demo) with PMH section (shown only on button click)
+
 import streamlit as st
-import pandas as pd, numpy as np, re, datetime as dt
+import pandas as pd
+import numpy as np
+import re
+import datetime as dt
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import linear_kernel
 
@@ -42,7 +47,7 @@ else:
              text="CABG ×3: LIMA-LAD, SVG-OM, SVG-PDA."),
     ])
 
-# ---- Add a PMH summary note so search can cite it ----
+# ---- PMH content (required items) ----
 PMH_ITEMS = [
     "Ischaemic heart disease (IHD)",
     "Heart failure",
@@ -51,6 +56,8 @@ PMH_ITEMS = [
     "History of binge drinking for the last 10 years",
 ]
 pmh_text = "Previous medical history: " + "; ".join(PMH_ITEMS) + "."
+
+# Add a PMH summary note so generic search can cite it
 df = pd.concat([
     df,
     pd.DataFrame([{"date": "2024-01-05", "source": "Problem list / PMH summary", "text": pmh_text}])
@@ -61,63 +68,49 @@ df["age_days"] = (dt.datetime.now() - df["date"]).dt.days
 
 # ---------------- Search index ----------------
 @st.cache_data(show_spinner=False)
-def build_index(texts):
+def build_index(texts: pd.Series):
     vec = TfidfVectorizer(stop_words="english")
     X = vec.fit_transform(texts.fillna(""))
     return vec, X
 
 vectorizer, X = build_index(df["text"])
 
-def search(query, k=6, half_life_days=365):
+def search(query: str, k: int = 6, half_life_days: int = 365):
     q = vectorizer.transform([query])
     sims = linear_kernel(q, X).ravel()
     recency = 0.5 ** (df["age_days"].fillna(3650) / half_life_days)
-    score = sims * (0.2 + 0.8*recency)
+    score = sims * (0.2 + 0.8 * recency)  # blend content + recency
     out = df.assign(score=score).sort_values("score", ascending=False)
     return out[out["score"] > 0].head(k)
 
-def highlight(text, terms):
-    if not terms: return text
+def highlight(text: str, terms):
+    if not terms:
+        return text
     pattern = r'(' + '|'.join(map(re.escape, terms)) + r')'
     return re.sub(pattern, r'**\1**', text, flags=re.I)
 
 # ---------------- UI ----------------
 st.title("Medical History Search (Demo)")
 
-# ===================== PMH SECTION (above Ask-the-chart) =====================
+# ===================== PMH SECTION (visible only after button click) =====================
 st.subheader("Previous Medical History (PMH)")
 
-# Button + code shown side-by-side
-col_btn, col_code = st.columns([1,2])
-
-# Persist visibility with session_state; only show after explicit click
 if "show_pmh" not in st.session_state:
     st.session_state.show_pmh = False
 
-with col_btn:
-    def _show():
-        st.session_state.show_pmh = True
-    def _hide():
-        st.session_state.show_pmh = False
-
+pmh_cols = st.columns([1, 6])
+with pmh_cols[0]:
     if not st.session_state.show_pmh:
-        st.button("Show PMH", type="primary", on_click=_show)
+        if st.button("Show PMH", type="primary", key="pmh_show"):
+            st.session_state.show_pmh = True
+            st.rerun()
     else:
-        st.button("Hide PMH", on_click=_hide)
+        if st.button("Hide PMH", key="pmh_hide"):
+            st.session_state.show_pmh = False
+            st.rerun()
 
-with col_code:
-    st.caption("Code that renders PMH in this demo:")
-    pmh_render_code = """# === PMH DISPLAY (triggered by button) ===
-if st.session_state.get('show_pmh', False):
-    st.success('Previous medical history')
-    for item in PMH_ITEMS:
-        st.markdown(f'- {item}')
-    st.caption('_Problem list / PMH summary • 2024-01-05_')
-# === END PMH DISPLAY ==="""
-    st.code(pmh_render_code, language="python")
-
-# --- Actual PMH rendering (only if the button was clicked) ---
-if st.session_state.get("show_pmh", False):
+# Render PMH only when toggled on
+if st.session_state.show_pmh:
     st.success("Previous medical history")
     for item in PMH_ITEMS:
         st.markdown(f"- {item}")
@@ -125,13 +118,13 @@ if st.session_state.get("show_pmh", False):
 
 st.markdown("---")
 
-# ===================== Ask the chart =====================
+# ===================== Ask the chart (general search) =====================
 query = st.text_input(
     "Ask the chart (e.g., 'When was the CABG?', 'Any contrast reactions?', 'Why apixaban?')",
     ""
 )
 
-col_ans, col_tl = st.columns([2,1])
+col_ans, col_tl = st.columns([2, 1])
 
 with col_ans:
     if query.strip():
@@ -142,7 +135,8 @@ with col_ans:
             st.subheader("Answer (with citations)")
             terms = [t for t in re.findall(r'\w+', query) if len(t) > 2]
             for _, r in hits.iterrows():
-                st.markdown(f"- {highlight(r['text'], terms)}  \n  _{r['source']} • {r['date'].date()}_")
+                date_str = r['date'].date().isoformat() if pd.notnull(r['date']) else "—"
+                st.markdown(f"- {highlight(r['text'], terms)}  \n  _{r['source']} • {date_str}_")
     else:
         st.caption("Type a question above to search the chart.")
 
@@ -150,6 +144,8 @@ with col_tl:
     st.subheader("Timeline")
     tl = df.sort_values("date", ascending=False)
     for _, r in tl.iterrows():
+        if pd.isnull(r["date"]):
+            continue
         st.write(f"{r['date'].date()} — {r['source']}")
 
 st.markdown("---")
