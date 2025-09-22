@@ -124,6 +124,39 @@ if st.session_state.show_pmh:
 st.markdown("---")
 
 
+# ===================== Ask the chart (general search) =====================
+query = st.text_input(
+    "Ask the chart (e.g., 'When was the CABG?', 'Any contrast reactions?', 'Why apixaban?')",
+    ""
+)
+
+col_ans, col_tl = st.columns([2, 1])
+
+with col_ans:
+    if query.strip():
+        hits = search(query)
+        if hits.empty:
+            st.info("No charted evidence found for this query.")
+        else:
+            st.subheader("Answer (with citations)")
+            terms = [t for t in re.findall(r'\w+', query) if len(t) > 2]
+            for _, r in hits.iterrows():
+                date_str = r['date'].date().isoformat() if pd.notnull(r['date']) else "—"
+                st.markdown(f"- {highlight(r['text'], terms)}  \n  _{r['source']} • {date_str}_")
+    else:
+        st.caption("Type a question above to search the chart.")
+
+with col_tl:
+    st.subheader("Timeline")
+    tl = df.sort_values("date", ascending=False)
+    for _, r in tl.iterrows():
+        if pd.isnull(r["date"]):
+            continue
+        st.write(f"{r['date'].date()} — {r['source']}")
+
+st.markdown("---")
+st.caption("Demo only. Verify findings in source notes before clinical decisions.")
+
 # ===================== 12-lead ECG Rhythm Check (upload & vet) =====================
 
 st.subheader("12-lead ECG rhythm check")
@@ -344,37 +377,3 @@ if f_hea and f_dat:
         st.error(f"Failed to process ECG: {e}")
 else:
     st.info("Upload both .hea and .dat files to run the rhythm check.")
-
-
-# ===================== Ask the chart (general search) =====================
-query = st.text_input(
-    "Ask the chart (e.g., 'When was the CABG?', 'Any contrast reactions?', 'Why apixaban?')",
-    ""
-)
-
-col_ans, col_tl = st.columns([2, 1])
-
-with col_ans:
-    if query.strip():
-        hits = search(query)
-        if hits.empty:
-            st.info("No charted evidence found for this query.")
-        else:
-            st.subheader("Answer (with citations)")
-            terms = [t for t in re.findall(r'\w+', query) if len(t) > 2]
-            for _, r in hits.iterrows():
-                date_str = r['date'].date().isoformat() if pd.notnull(r['date']) else "—"
-                st.markdown(f"- {highlight(r['text'], terms)}  \n  _{r['source']} • {date_str}_")
-    else:
-        st.caption("Type a question above to search the chart.")
-
-with col_tl:
-    st.subheader("Timeline")
-    tl = df.sort_values("date", ascending=False)
-    for _, r in tl.iterrows():
-        if pd.isnull(r["date"]):
-            continue
-        st.write(f"{r['date'].date()} — {r['source']}")
-
-st.markdown("---")
-st.caption("Demo only. Verify findings in source notes before clinical decisions.")
