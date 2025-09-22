@@ -10,7 +10,7 @@ st.sidebar.header("Patient")
 demo_structured = dict(
     name="Jane Doe", sex="F", dob="1952-08-20",
     problems=["AF (paroxysmal)", "CAD s/p CABG (2018)"],
-    meds=["Apixaban 5 mg BD", "Metoprolol 50 mg BD", "Atorvastatin 40 mg nocte"],
+    meds=["Apixaban 5 mg BID", "Metoprolol 50 mg BID", "Atorvastatin 40 mg nocte"],
     allergies=["Amoxicillin – rash (remote)"],
     vitals=dict(hr=78, bp="128/72", spo2="97% RA"),
 )
@@ -84,30 +84,52 @@ def highlight(text, terms):
 # ---------------- UI ----------------
 st.title("Medical History Search (Demo)")
 
-# ---- NEW: Previous Medical History section (appears ABOVE general ask) ----
-with st.container():
-    st.subheader("Previous Medical History (PMH)")
-    pmh_prompt = st.text_input(
-        "Ask for previous medical history of the patient",
-        placeholder="e.g., 'previous medical history' or 'PMH'",
-        key="pmh_query"
-    )
-    colA, colB = st.columns([1,3])
-    with colA:
-        show_pmh = st.button("Show PMH")
-    with colB:
-        st.caption("Includes IHD, heart failure, hypertension, mitral valve disease, and a 10-year history of binge drinking.")
+# ===================== PMH SECTION (above Ask-the-chart) =====================
+st.subheader("Previous Medical History (PMH)")
 
-    if pmh_prompt.strip() or show_pmh:
-        st.success("Previous medical history")
-        st.markdown("\n".join([f"- {item}" for item in PMH_ITEMS]))
-        # Also show the PMH summary “citation” entry so it feels like the chart
-        st.caption("_Problem list / PMH summary • 2024-01-05_")
+# Button + code shown side-by-side
+col_btn, col_code = st.columns([1,2])
+
+# Persist visibility with session_state; only show after explicit click
+if "show_pmh" not in st.session_state:
+    st.session_state.show_pmh = False
+
+with col_btn:
+    def _show():
+        st.session_state.show_pmh = True
+    def _hide():
+        st.session_state.show_pmh = False
+
+    if not st.session_state.show_pmh:
+        st.button("Show PMH", type="primary", on_click=_show)
+    else:
+        st.button("Hide PMH", on_click=_hide)
+
+with col_code:
+    st.caption("Code that renders PMH in this demo:")
+    pmh_render_code = """# === PMH DISPLAY (triggered by button) ===
+if st.session_state.get('show_pmh', False):
+    st.success('Previous medical history')
+    for item in PMH_ITEMS:
+        st.markdown(f'- {item}')
+    st.caption('_Problem list / PMH summary • 2024-01-05_')
+# === END PMH DISPLAY ==="""
+    st.code(pmh_render_code, language="python")
+
+# --- Actual PMH rendering (only if the button was clicked) ---
+if st.session_state.get("show_pmh", False):
+    st.success("Previous medical history")
+    for item in PMH_ITEMS:
+        st.markdown(f"- {item}")
+    st.caption("_Problem list / PMH summary • 2024-01-05_")
 
 st.markdown("---")
 
-# ---- Ask the chart (general search) ----
-query = st.text_input("Ask the chart (e.g., 'When was the CABG?', 'Any contrast reactions?', 'Why apixaban?')", "")
+# ===================== Ask the chart =====================
+query = st.text_input(
+    "Ask the chart (e.g., 'When was the CABG?', 'Any contrast reactions?', 'Why apixaban?')",
+    ""
+)
 
 col_ans, col_tl = st.columns([2,1])
 
@@ -132,6 +154,3 @@ with col_tl:
 
 st.markdown("---")
 st.caption("Demo only. Verify findings in source notes before clinical decisions.")
-
-
-
