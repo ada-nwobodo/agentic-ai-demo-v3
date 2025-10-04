@@ -33,6 +33,13 @@ st.sidebar.write("**Vitals**:", f"HR {demo_structured['vitals']['hr']}, BP {demo
 st.sidebar.markdown("---")
 uploaded = st.sidebar.file_uploader("Upload de-identified notes CSV (date,source,text)", type=["csv"])
 
+# Optional: Upload a lab results file (or use demo labs if not uploaded)
+labs_upload = st.sidebar.file_uploader(
+    "Upload labs CSV (date,encounter,urea,creatinine,bnp,hgb)",
+    type=["csv"],
+    key="labs_csv"
+)
+
 # ---------------- Load notes (demo set if none uploaded) ----------------
 if uploaded is not None:
     df = pd.read_csv(uploaded)
@@ -71,6 +78,75 @@ df = pd.concat([
 df["date"] = pd.to_datetime(df["date"], errors="coerce")
 df["age_days"] = (dt.datetime.now() - df["date"]).dt.days
 
+# ---------------- Demo or uploaded labs ----------------
+if labs_upload is not None:
+    labs = pd.read_csv(labs_upload)
+else:
+    # Demo labs (simulate last few hospital attendances)
+    labs = pd.DataFrame([
+        {"date": "2023-10-02", "encounter": "Admission", "urea": 6.0, "creatinine": 82,  "bnp": 180, "hgb": 126},
+        {"date": "2023-12-15", "encounter": "ED",        "urea": 6.8, "creatinine": 95,  "bnp": 210, "hgb": 123},
+        {"date": "2024-03-28", "encounter": "Admission", "urea": 7.5, "creatinine": 112, "bnp": 260, "hgb": 119},
+        {"date": "2024-07-09", "encounter": "ED",        "urea": 8.9, "creatinine": 132, "bnp": 340, "hgb": 115},
+        {"date": "2024-11-21", "encounter": "Admission", "urea": 9.6, "creatinine": 145, "bnp": 420, "hgb": 111},
+        {"date": "2025-02-04", "encounter": "ED",        "urea": 10.2,"creatinine": 158, "bnp": 510, "hgb": 108},
+        {"date": "2025-06-18", "encounter": "Admission", "urea": 11.3,"creatinine": 171, "bnp": 615, "hgb": 104},
+    ])
+labs["date"] = pd.to_datetime(labs["date"], errors="coerce")
+labs = labs.dropna(subset=["date"]).sort_values("date")
+
+# ---- Helpers to compute & render abnormal trends (last 5 attendances) ----
+def last5_attendances(labs_df: pd.DataFrame):
+    # Take the last 5 rows by date (assumes each row is an attendance)
+    return labs_df.sort_values("date").tail(5).reset_index(drop=True)
+
+def trend_delta(series: pd.Series, inverse: bool = False):
+    """Return (delta, direction_str). inverse=True => downward is 'worse' (e.g., haemoglobin)."""
+    if series.dropna().shape[0] < 2:
+        return 0.0, "no change"
+    delta = float(series.iloc[-1] - series.iloc[0])
+    if inverse:
+        direction = "worse" if delta < 0 else ("better" if delta > 0 else "no change")
+    else:
+        direction = "worse" if delta > 0 else ("better" if delta < 0 else "no change")
+    return delta, direction
+
+def render_abnormal_trends(labs_df: pd.DataFrame):
+    data5 = last5_attendances(labs_df)
+    st.success("Abnormal trends over last 5 hospital attendances")
+
+    # Headline metrics (latest value + delta vs first of the five)
+    m1, m2, m3 = st.columns(3)
+    d_u, _  = trend_delta(data5["urea"])                   # higher = worse
+    d_cr, _ = trend_delta(data5["creatinine"])             # higher = worse
+    d_hb, _ = trend_delta(data5["hgb"], inverse=True)      # lower  = worse
+    m1.metric("Urea",        f"{data5['urea'].iloc[-1]:.1f}",  f"{d_u:+.1f} vs first")
+    m2.metric("Creatinine",  f"{data5['creatinine'].iloc[-1]:.0f}", f"{d_cr:+.0f} vs first")
+    m3.metric("Haemoglobin", f"{data5['hgb'].iloc[-1]:.0f}",   f"{d_hb:+.0f} vs first")
+
+    st.caption("Deterioration flagged when urea/creatinine rise, BNP rises, and haemoglobin falls.")
+
+    # Plots
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Renal function")
+        st.line_chart(data5.set_index("date")[["urea","creatinine"]])
+    with c2:
+        st.subheader("BNP (rising is worse)")
+        st.line_chart(data5.set_index("date")[["bnp"]])
+
+    st.subheader("Haemoglobin (falling is worse)")
+    st.line_chart(data5.set_index("date")[["hgb"]])
+
+    # Compact table of the 5 encounters
+    st.dataframe(
+        data5[["date","encounter","urea","creatinine","bnp","hgb"]]
+           .rename(columns={"hgb":"haemoglobin"})
+           .style.format({"urea":"{:.1f}","creatinine":"{:.0f}","bnp":"{:.0f}","haemoglobin":"{:.0f}"}),
+        use_container_width=True,
+    )
+
+
 # ---------------- Search index ----------------
 @st.cache_data(show_spinner=False)
 def build_index(texts: pd.Series):
@@ -100,10 +176,15 @@ st.title("Medical History Search (Demo)")
 # ===================== PMH SECTION (visible only after button click) =====================
 st.subheader("Previous Medical History (PMH)")
 
+#Track UI toggle states
 if "show_pmh" not in st.session_state:
     st.session_state.show_pmh = False
+if "show_trends" not in st.session_state:
+    st.session_state.show_trends = False    
 
-pmh_cols = st.columns([1, 6])
+#Two buttons side by side: Show PMH and Show Abnormal Trends
+pmh_cols = st.columns([1, 1, 6])
+
 with pmh_cols[0]:
     if not st.session_state.show_pmh:
         if st.button("Show PMH", type="primary", key="pmh_show"):
@@ -114,12 +195,26 @@ with pmh_cols[0]:
             st.session_state.show_pmh = False
             st.rerun()
 
+with pmh_cols[1]:
+    if not st.session_state.show_trends:
+        if st.button("Show Abnormal Trends", key="trends_show"):
+            st.session_state.show_trends = True
+            st.rerun()
+    else:
+        if st.button("Hide Trends", key="trends_hide"):
+            st.session_state.show_trends = False
+            st.rerun()
+
 # Render PMH only when toggled on
 if st.session_state.show_pmh:
     st.success("Previous medical history")
     for item in PMH_ITEMS:
         st.markdown(f"- {item}")
     st.caption("_Problem list / PMH summary • 2024-01-05_")
+
+# Render abnormal trends only when toggled on
+if st.session_state.show_trends:
+    render_abnormal_trends(labs)
 
 st.markdown("---")
 
