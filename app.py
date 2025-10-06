@@ -718,56 +718,78 @@ if st.button("Request Imaging", type="primary", key="req_img"):
         st.success("Imaging request noted. Step marked complete.")
 
 
-# ===================== Feedback: value, ranking, time saved =====================
-st.markdown("---")
-with st.expander("Tell us what's most valuable (rank features, rate value, estimate time saved)"):
-    FEATURES = [
-        {"key": "show_pmh",                     "label": "Show PMH"},
-        {"key": "previous_abnormal_bloods",     "label": "Show Abnormal Trends (labs)"},
-        {"key": "detailed_search",              "label": "Ask the Chart (search)"},
-        {"key": "ecg_check",                    "label": "12-lead ECG Rhythm Check"},
-        {"key": "PhysioNet",                    "label": "Compare with Trusted Source"},
-        {"key": "request_imaging",              "label": "Request Imaging summary + guidelines"},
-    ]
+# ===================== USER FEEDBACK & FEATURE VALUE PANEL (Enhanced) =====================
 
-    # Default table to edit
-    import pandas as pd
-    if "feedback_df" not in st.session_state:
-        st.session_state.feedback_df = pd.DataFrame(
-            {
-                "Feature": [f["label"] for f in FEATURES],
-                "Key":     [f["key"]   for f in FEATURES],
-                "Rank (1=highest)": list(range(1, len(FEATURES)+1)),
-                "Value vs current ways of working (1–5)": [3]*len(FEATURES),
-                "Time saved per use (min)": [0]*len(FEATURES),
-            }
+st.markdown("---")
+st.header("💬 Tell us what's most valuable")
+
+st.caption("Please rank the usefulness of each feature compared with your current workflow, "
+           "and estimate whether you’d adopt it and whether it could help you avoid errors or omissions.")
+
+# Define feature list
+features = [
+    "Show PMH",
+    "Abnormal Bloods",
+    "Detailed Search Records",
+    "12-Lead ECG Check",
+    "PhysioNet",
+    "Imaging + Guidelines",
+]
+
+# Build feedback containers
+feedback_data = []
+for feature in features:
+    with st.expander(f"⭐ {feature}", expanded=False):
+        st.markdown(f"**{feature}** – How valuable is this feature compared to your current way of working?")
+        
+        usefulness = st.slider(
+            f"Usefulness of {feature} (1 = No benefit, 7 = Transformative)",
+            1, 7, 4, key=f"usefulness_{feature}"
         )
 
-    df_edit = st.data_editor(
-        st.session_state.feedback_df,
-        num_rows="fixed",
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Rank (1=highest)": st.column_config.NumberColumn(min_value=1, max_value=len(FEATURES), step=1),
-            "Value vs current (1–5)": st.column_config.NumberColumn(min_value=1, max_value=5, step=1),
-            "Time saved per use (min)": st.column_config.NumberColumn(min_value=0, max_value=120, step=1),
-            "Key": st.column_config.TextColumn(disabled=True),
-        }
-    )
+        time_saved = st.number_input(
+            f"Estimated minutes saved using {feature}",
+            0, 120, 0, key=f"time_saved_{feature}"
+        )
 
-    # Optional participant code (helps distinguish users)
-    user_hint = st.text_input("Participant code (email/initials or code)", value=st.session_state.get("user_id",""))
-    if user_hint:
-        st.session_state["user_id"] = user_hint.strip()
+        adoption = st.radio(
+            f"Would you use {feature} if integrated into your EHR?",
+            ["Yes", "Maybe", "No"], horizontal=True, key=f"adoption_{feature}"
+        )
 
-    comments = st.text_area("Any comments on usefulness, gaps, or adoption considerations?")
+        error_avoidance = st.slider(
+            f"Would {feature} help you avoid omissions or errors? (1 = No, 5 = Absolutely)",
+            1, 5, 3, key=f"error_avoidance_{feature}"
+        )
 
-    # Validate and submit
-    if st.button("Submit feature ranking & value feedback", type="primary"):
-        # Validate ranks are a permutation 1..N with no duplicates
-        ranks = df_edit["Rank (1=highest)"].astype(int).tolist()
+        feedback_data.append({
+            "feature": feature,
+            "usefulness": usefulness,
+            "time_saved": time_saved,
+            "adoption": adoption,
+            "error_avoidance": error_avoidance
+        })
 
+# Overall experience & comments
+st.subheader("Overall experience")
+overall_rating = st.slider("How valuable was this demo overall?", 1, 10, 7, key="overall_rating")
+comments = st.text_area("Any additional comments or suggestions?")
 
-    st.info("This section is a non-diagnostic draft. Please verify clinical details and local guideline applicability before submitting an imaging request.")
-       
+# Submit feedback
+if st.button("Submit Feedback", type="primary", key="submit_feedback"):
+    try:
+        sb.table("feature_feedback").insert({
+            "user_id": st.session_state.get("user_id", "anon"),
+            "session_id": st.session_state.get("session_id"),
+            "demo_name": "med_history_demo",
+            "ranking": {
+                "features": feedback_data,
+                "overall_rating": overall_rating
+            },
+            "comments": comments
+        }).execute()
+        st.success("✅ Thank you for your feedback! It’s been securely recorded.")
+    except Exception as e:
+        st.error(f"⚠️ Failed to submit feedback: {e}")
+
+        st.info("This section is a non-diagnostic draft. Please verify clinical details and local guideline applicability before submitting an imaging request.")
