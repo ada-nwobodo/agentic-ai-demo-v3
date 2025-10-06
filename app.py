@@ -723,11 +723,11 @@ st.markdown("---")
 with st.expander("Tell us what's most valuable (rank features, rate value, estimate time saved)"):
     FEATURES = [
         {"key": "show_pmh",                     "label": "Show PMH"},
-        {"key": "show_abnormal_trends",         "label": "Show Abnormal Trends (labs)"},
-        {"key": "ask_the_chart",                "label": "Ask the Chart (search)"},
+        {"key": "previous_abnormal_bloods",     "label": "Show Abnormal Trends (labs)"},
+        {"key": "detailed_search",              "label": "Ask the Chart (search)"},
         {"key": "ecg_check",                    "label": "12-lead ECG Rhythm Check"},
-        {"key": "compare_with_trusted_source",  "label": "Compare with Trusted Source"},
-        {"key": "request_imaging",              "label": "Request Imaging summary + guidance"},
+        {"key": "PhysioNet",                    "label": "Compare with Trusted Source"},
+        {"key": "request_imaging",              "label": "Request Imaging summary + guidelines"},
     ]
 
     # Default table to edit
@@ -738,7 +738,7 @@ with st.expander("Tell us what's most valuable (rank features, rate value, estim
                 "Feature": [f["label"] for f in FEATURES],
                 "Key":     [f["key"]   for f in FEATURES],
                 "Rank (1=highest)": list(range(1, len(FEATURES)+1)),
-                "Value vs current (1–5)": [3]*len(FEATURES),
+                "Value vs current ways of working (1–5)": [3]*len(FEATURES),
                 "Time saved per use (min)": [0]*len(FEATURES),
             }
         )
