@@ -13,7 +13,35 @@ import numpy as np
 import matplotlib.pyplot as plt
 import neurokit2 as nk
 
+
 st.set_page_config(page_title="Medical History Search (Demo)", layout="wide")
+
+# ---- Supabase client (uses your ANON key to match your working RLS) ----
+from supabase import create_client, Client
+import uuid
+
+SB_URL = st.secrets["SUPABASE_URL"]
+SB_KEY = st.secrets["SUPABASE_ANON_KEY"]  # matches your anon RLS policies
+sb: Client = create_client(SB_URL, SB_KEY)
+
+# ---- Session id (one per app session) ----
+if "session_id" not in st.session_state:
+    st.session_state["session_id"] = str(uuid.uuid4())
+
+
+# ---- Optional: manual smoke test to verify RLS + inserts ----
+with st.sidebar.expander("Supabase (dev only)"):
+    if st.button("Run Supabase smoke test"):
+        sb.table("demo_events").insert({
+            "session_id": st.session_state["session_id"],
+            "user_id": "anon",
+            "demo_name": "med_history_demo",
+            "event_type": "smoke_test",
+            "feature_name": "none",
+            "payload": {}
+        }).execute()
+        st.success("Inserted smoke-test row into demo_events ✅")
+
 
 # ---------------- Sidebar: patient context ----------------
 st.sidebar.header("Patient")
@@ -188,24 +216,66 @@ pmh_cols = st.columns([1, 1, 6])
 with pmh_cols[0]:
     if not st.session_state.show_pmh:
         if st.button("Show PMH", type="primary", key="pmh_show"):
+            # ✅ Log button click to Supabase
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": "anon",
+                "demo_name": "med_history_demo",
+                "event_type": "button_click",
+                "feature_name": "show_pmh",
+                "payload": {"action": "show", "stage_number": 1}
+            }).execute()
+            
+            #Then update the state and rerun
             st.session_state.show_pmh = True
             st.rerun()
     else:
         if st.button("Hide PMH", key="pmh_hide"):
+            # ✅ Log "Hide PMH" button click
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": "anon",
+                "demo_name": "med_history_demo",
+                "event_type": "button_click",
+                "feature_name": "show_pmh",
+                "payload": {"action": "hide", "stage_number": 1}
+            }).execute()
+ 
             st.session_state.show_pmh = False
             st.rerun()
 
+# ===================== "Show Abnormal Trends" button =====================
 with pmh_cols[1]:
     if not st.session_state.show_trends:
         if st.button("Show Abnormal Trends", key="trends_show"):
+            # ✅ Log "Show Abnormal Trends" button click
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": "anon",
+                "demo_name": "med_history_demo",
+                "event_type": "button_click",
+                "feature_name": "show_abnormal_trends",
+                "payload": {"action": "show", "stage_number": 2}
+            }).execute()
+            
             st.session_state.show_trends = True
             st.rerun()
     else:
         if st.button("Hide Trends", key="trends_hide"):
+            # ✅ Log "Hide Abnormal Trends" button click
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": "anon",
+                "demo_name": "med_history_demo",
+                "event_type": "button_click",
+                "feature_name": "show_abnormal_trends",
+                "payload": {"action": "hide", "stage_number": 2}
+            }).execute()
+            
             st.session_state.show_trends = False
             st.rerun()
 
-# Render PMH only when toggled on
+# ---------------- Render the PMH and Trends sections ----------------
 if st.session_state.show_pmh:
     st.success("Previous medical history")
     for item in PMH_ITEMS:
@@ -220,6 +290,7 @@ st.markdown("---")
 
 
 # ===================== Ask the chart (general search) =====================
+
 query = st.text_input(
     "Ask the chart (e.g., 'When was the CABG?', 'Any contrast reactions?', 'Why apixaban?')",
     ""
@@ -229,7 +300,33 @@ col_ans, col_tl = st.columns([2, 1])
 
 with col_ans:
     if query.strip():
+        # ---- run the search & time it ----
+        t0 = dt.datetime.utcnow()
         hits = search(query)
+        latency_ms = int((dt.datetime.utcnow() - t0).total_seconds() * 1000)
+        k_hits = int(hits.shape[0])
+
+        # ---- log the search event (stage 3) ----
+        try:
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": "anon",
+                "demo_name": "med_history_demo",
+                "event_type": "search",
+                "feature_name": "ask_the_chart",
+                "payload": {
+                    "stage_number": 3,
+                    "q": query,
+                    "k": k_hits,
+                    "latency_ms": latency_ms,
+                    # include a tiny sample of returned text (truncated, de-identified)
+                    "hits_sample": [str(t)[:120] for t in hits["text"].head(3).fillna("").tolist()]
+                }
+            }).execute()
+        except Exception:
+            pass
+
+        # ---- render results (unchanged) ----
         if hits.empty:
             st.info("No charted evidence found for this query.")
         else:
@@ -252,6 +349,7 @@ with col_tl:
 st.markdown("---")
 st.caption("Demo only. Verify findings in source notes before clinical decisions.")
 
+
 # ===================== 12-lead ECG Rhythm Check (upload & vet) =====================
 
 st.subheader("12-lead ECG rhythm check")
@@ -264,6 +362,33 @@ with col_u1:
     f_hea = st.file_uploader("Header (.hea)", type=["hea"], key="ecg_hea")
 with col_u2:
     f_dat = st.file_uploader("Signal (.dat)", type=["dat"], key="ecg_dat")
+
+# ---- INSERT A: log ECG file uploads (minimal) ----
+if "last_ecg_upload" not in st.session_state:
+    st.session_state.last_ecg_upload = (None, None)
+
+_curr = (getattr(f_hea, "name", None), getattr(f_dat, "name", None))
+if _curr != st.session_state.last_ecg_upload and (f_hea or f_dat):
+    try:
+        sb.table("demo_events").insert({
+            "session_id": st.session_state["session_id"],
+            "user_id": "anon",
+            "demo_name": "med_history_demo",
+            "event_type": "file_upload",
+            "feature_name": "ecg_wfdb",
+            "payload": {
+                "stage_number": 4,
+                "has_header": bool(f_hea),
+                "has_signal": bool(f_dat),
+                "header_name": _curr[0],
+                "signal_name": _curr[1],
+            }
+        }).execute()
+    except Exception:
+        pass
+    st.session_state.last_ecg_upload = _curr
+# ---- END INSERT A ----
+
 
 def _save_temp_pair(fhea, fdat):
     """Save uploaded WFDB pair to a temp folder and return (tmpdir, record_name_base)."""
@@ -424,6 +549,20 @@ def _rhythm_inference(lead_ii, fs):
 # ----- Run if both files provided -----
 if f_hea and f_dat:
     try:
+        # ---- INSERT B: mark ECG feature used (minimal) ----
+        try:
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": "anon",
+                "demo_name": "med_history_demo",
+                "event_type": "button_click",
+                "feature_name": "ecg_check",
+                "payload": {"stage_number": 4, "action": "run"}
+            }).execute()
+        except Exception:
+            pass
+        # ---- END INSERT B ----
+        
         tmpdir, rec_base = _save_temp_pair(f_hea, f_dat)
         rec = wfdb.rdrecord(os.path.join(tmpdir, rec_base))
         sig = rec.p_signal
@@ -467,11 +606,98 @@ if f_hea and f_dat:
             else:
                 st.warning("Prediction and trusted label may differ—review visually.")
 
+            # ---- INSERT E: log "compare_with_trusted_source" (stage 5) ----
+            try:
+                agrees = (("fib" in tl and "fibrillation" in guess) or ("sinus" in tl and "sinus" in guess))
+                sb.table("demo_events").insert({
+                    "session_id": st.session_state["session_id"],
+                    "user_id": "anon",
+                    "demo_name": "med_history_demo",
+                    "event_type": "view",
+                    "feature_name": "compare_with_trusted_source",
+                    "payload": {
+                    "stage_number": 5,
+                    "trusted": trusted[:160],
+                    "pred": rr_res["label"],
+                    "agrees": bool(agrees)
+                    }
+                }).execute()
+            except Exception:
+                pass
+    # ---- END INSERT E ----
+
         st.caption("Demo only — not for clinical use. Validate against source ECG and clinical context.")
     except Exception as e:
         st.error(f"Failed to process ECG: {e}")
 else:
     st.info("Upload both .hea and .dat files to run the rhythm check.")
+
+# ---- INSERT F: Request Imaging – summary + log step 6 ----
+with st.expander("Request Imaging – summary of clinical information + relevant guidelines", expanded=False):
+    # (minimal, safe placeholders — keep or replace with your dynamic summary)
+    name = demo_structured.get("name", "Patient")
+    sex  = demo_structured.get("sex", "—")
+    dob  = demo_structured.get("dob", "—")
+    problems = "; ".join(demo_structured.get("problems", [])) or "—"
+    meds     = "; ".join(demo_structured.get("meds", [])) or "—"
+    allergies = "; ".join(demo_structured.get("allergies", [])) or "—"
+
+    st.markdown(f"""
+**Clinical Summary (draft)**
+- {sex}, DOB {dob}. PMH: {problems}
+- Medications: {meds}
+- Allergies: {allergies}
+- Intended request: *Please review for appropriate imaging based on presentation and PMH.*
+""")
+
+    st.markdown("""
+**Guideline reminders (verify locally)**
+- AF / CAD: consider imaging if change in rhythm/LV function or graft evaluation relevant.
+- Contrast: check renal function (eGFR/creatinine), prior contrast reactions, hydration/meds.
+""")
+
+    # Button marks the step as done and logs it
+    if st.button("Mark Request Imaging step done", key="req_img_done"):
+        # Log the request_imaging step (stage 6)
+        try:
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": "anon",
+                "demo_name": "med_history_demo",
+                "event_type": "button_click",
+                "feature_name": "request_imaging",
+                "payload": {"stage_number": 6, "action": "submit"}
+            }).execute()
+        except Exception:
+            pass
+
+        # Optional: also log session_end = completed
+        try:
+            # ensure we have a start timestamp to compute duration
+            if "timestamp_start" not in st.session_state:
+                st.session_state["timestamp_start"] = dt.datetime.utcnow().isoformat()
+            ts_end = dt.datetime.utcnow()
+            ts_start = dt.datetime.fromisoformat(st.session_state["timestamp_start"])
+            duration_sec = int((ts_end - ts_start).total_seconds())
+
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": "anon",
+                "demo_name": "med_history_demo",
+                "event_type": "session_end",
+                "feature_name": None,
+                "payload": {
+                    "reason": "completed",
+                    "timestamp_end": ts_end.isoformat(),
+                    "duration_sec": duration_sec,
+                    "last_info": "request_imaging_marked_done"
+                }
+            }).execute()
+        except Exception:
+            pass
+
+        st.success("Marked Request Imaging step as done.")
+# ---- END INSERT F ----
 
 
 # ---------------------------------------------------------------------
