@@ -467,8 +467,14 @@ if f_hea and f_dat:
             else:
                 st.warning("Prediction and trusted label may differ—review visually.")
 
+        st.caption("Demo only — not for clinical use. Validate against source ECG and clinical context.")
+    except Exception as e:
+        st.error(f"Failed to process ECG: {e}")
+else:
+    st.info("Upload both .hea and .dat files to run the rhythm check.")
 
- # ---------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
 # Request Imaging – summary of clinical information + relevant guidelines
 # ---------------------------------------------------------------------
 def _latest_labs_summary(labs_df):
@@ -514,9 +520,3 @@ with st.expander("Request Imaging – summary of clinical information + relevant
 
     st.info("This section is a non-diagnostic draft. Please verify clinical details and local guideline applicability before submitting an imaging request.")
        
-
-        st.caption("Demo only — not for clinical use. Validate against source ECG and clinical context.")
-    except Exception as e:
-        st.error(f"Failed to process ECG: {e}")
-else:
-    st.info("Upload both .hea and .dat files to run the rhythm check.")
