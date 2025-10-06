@@ -467,6 +467,54 @@ if f_hea and f_dat:
             else:
                 st.warning("Prediction and trusted label may differ—review visually.")
 
+
+ # ---------------------------------------------------------------------
+# Request Imaging – summary of clinical information + relevant guidelines
+# ---------------------------------------------------------------------
+def _latest_labs_summary(labs_df):
+    try:
+        if labs_df is None or labs_df.empty:
+            return "Latest labs: not available."
+        row = labs_df.sort_values("date").iloc[-1]
+        parts = []
+        if "urea" in row: parts.append(f"Urea {row['urea']:.1f} mmol/L")
+        if "creatinine" in row: parts.append(f"Creatinine {row['creatinine']:.0f} µmol/L")
+        if "bnp" in row: parts.append(f"BNP {row['bnp']:.0f} ng/L")
+        if "hgb" in row: parts.append(f"Hb {row['hgb']:.0f} g/L")
+        return "Latest labs: " + ", ".join(parts) if parts else "Latest labs: not available."
+    except Exception:
+        return "Latest labs: not available."
+
+with st.expander("Request Imaging – summary of clinical information + relevant guidelines", expanded=False):
+    # Pull a few structured bits if available
+    name = demo_structured.get("name", "Patient")
+    sex  = demo_structured.get("sex", "—")
+    dob  = demo_structured.get("dob", "—")
+    problems = "; ".join(demo_structured.get("problems", [])) or "—"
+    meds     = "; ".join(demo_structured.get("meds", [])) or "—"
+    allergies = "; ".join(demo_structured.get("allergies", [])) or "—"
+
+    labs_line = _latest_labs_summary(labs if "labs" in locals() else None)
+
+    st.markdown(f"""
+**Clinical Summary (auto-generated draft)**  
+- {sex}, DOB {dob}. PMH: {problems}.  
+- Medications: {meds}.  
+- Allergies: {allergies}.  
+- {labs_line}  
+- Intended request: **Please review for appropriate imaging based on current presentation and PMH.**
+""")
+
+    st.markdown("""
+**Relevant guideline reminders (for the requester to verify)**  
+- **AF (NICE NG185):** Imaging particularly if there’s a change in rhythm, LV function, or suspected complications.  
+- **Stable chest pain/CAD (NICE NG17):** CT coronary angiography is first-line; post-CABG graft evaluation may be indicated if clinically relevant.  
+- **Iodinated contrast safety:** Check renal function (e.g., eGFR/creatinine) and prior contrast reactions; ensure hydration and medication review.
+""")
+
+    st.info("This section is a non-diagnostic draft. Please verify clinical details and local guideline applicability before submitting an imaging request.")
+       
+
         st.caption("Demo only — not for clinical use. Validate against source ECG and clinical context.")
     except Exception as e:
         st.error(f"Failed to process ECG: {e}")
