@@ -632,72 +632,7 @@ if f_hea and f_dat:
 else:
     st.info("Upload both .hea and .dat files to run the rhythm check.")
 
-# ---- INSERT F: Request Imaging – summary + log step 6 ----
-with st.expander("Request Imaging – summary of clinical information + relevant guidelines", expanded=False):
-    # (minimal, safe placeholders — keep or replace with your dynamic summary)
-    name = demo_structured.get("name", "Patient")
-    sex  = demo_structured.get("sex", "—")
-    dob  = demo_structured.get("dob", "—")
-    problems = "; ".join(demo_structured.get("problems", [])) or "—"
-    meds     = "; ".join(demo_structured.get("meds", [])) or "—"
-    allergies = "; ".join(demo_structured.get("allergies", [])) or "—"
 
-    st.markdown(f"""
-**Clinical Summary (draft)**
-- {sex}, DOB {dob}. PMH: {problems}
-- Medications: {meds}
-- Allergies: {allergies}
-- Intended request: *Please review for appropriate imaging based on presentation and PMH.*
-""")
-
-    st.markdown("""
-**Guideline reminders (verify locally)**
-- AF / CAD: consider imaging if change in rhythm/LV function or graft evaluation relevant.
-- Contrast: check renal function (eGFR/creatinine), prior contrast reactions, hydration/meds.
-""")
-
-    # Button marks the step as done and logs it
-    if st.button("Mark Request Imaging step done", key="req_img_done"):
-        # Log the request_imaging step (stage 6)
-        try:
-            sb.table("demo_events").insert({
-                "session_id": st.session_state["session_id"],
-                "user_id": "anon",
-                "demo_name": "med_history_demo",
-                "event_type": "button_click",
-                "feature_name": "request_imaging",
-                "payload": {"stage_number": 6, "action": "submit"}
-            }).execute()
-        except Exception:
-            pass
-
-        # Optional: also log session_end = completed
-        try:
-            # ensure we have a start timestamp to compute duration
-            if "timestamp_start" not in st.session_state:
-                st.session_state["timestamp_start"] = dt.datetime.utcnow().isoformat()
-            ts_end = dt.datetime.utcnow()
-            ts_start = dt.datetime.fromisoformat(st.session_state["timestamp_start"])
-            duration_sec = int((ts_end - ts_start).total_seconds())
-
-            sb.table("demo_events").insert({
-                "session_id": st.session_state["session_id"],
-                "user_id": "anon",
-                "demo_name": "med_history_demo",
-                "event_type": "session_end",
-                "feature_name": None,
-                "payload": {
-                    "reason": "completed",
-                    "timestamp_end": ts_end.isoformat(),
-                    "duration_sec": duration_sec,
-                    "last_info": "request_imaging_marked_done"
-                }
-            }).execute()
-        except Exception:
-            pass
-
-        st.success("Marked Request Imaging step as done.")
-# ---- END INSERT F ----
 
 
 # ---------------------------------------------------------------------
@@ -743,6 +678,96 @@ with st.expander("Request Imaging – summary of clinical information + relevant
 - **Stable chest pain/CAD (NICE NG17):** CT coronary angiography is first-line; post-CABG graft evaluation may be indicated if clinically relevant.  
 - **Iodinated contrast safety:** Check renal function (e.g., eGFR/creatinine) and prior contrast reactions; ensure hydration and medication review.
 """)
+
+if st.button("Request Imaging", type="primary", key="req_img"):
+        try:
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": st.session_state.get("user_id", "anon"),
+                "demo_name": "med_history_demo",
+                "event_type": "button_click",
+                "feature_name": "request_imaging",
+                "payload": {"stage_number": 6, "action": "submit"}
+            }).execute()
+        except Exception:
+            pass
+
+        try:
+            if "timestamp_start" not in st.session_state:
+                st.session_state["timestamp_start"] = dt.datetime.utcnow().isoformat()
+            ts_end = dt.datetime.utcnow()
+            ts_start = dt.datetime.fromisoformat(st.session_state["timestamp_start"])
+            duration_sec = int((ts_end - ts_start).total_seconds())
+
+            sb.table("demo_events").insert({
+                "session_id": st.session_state["session_id"],
+                "user_id": st.session_state.get("user_id", "anon"),
+                "demo_name": "med_history_demo",
+                "event_type": "session_end",
+                "feature_name": None,
+                "payload": {
+                    "reason": "completed",
+                    "timestamp_end": ts_end.isoformat(),
+                    "duration_sec": duration_sec,
+                    "last_info": "request_imaging_clicked"
+                }
+            }).execute()
+        except Exception:
+            pass
+
+        st.success("Imaging request noted. Step marked complete.")
+
+
+# ===================== Feedback: value, ranking, time saved =====================
+st.markdown("---")
+with st.expander("Tell us what's most valuable (rank features, rate value, estimate time saved)"):
+    FEATURES = [
+        {"key": "show_pmh",                     "label": "Show PMH"},
+        {"key": "show_abnormal_trends",         "label": "Show Abnormal Trends (labs)"},
+        {"key": "ask_the_chart",                "label": "Ask the Chart (search)"},
+        {"key": "ecg_check",                    "label": "12-lead ECG Rhythm Check"},
+        {"key": "compare_with_trusted_source",  "label": "Compare with Trusted Source"},
+        {"key": "request_imaging",              "label": "Request Imaging summary + guidance"},
+    ]
+
+    # Default table to edit
+    import pandas as pd
+    if "feedback_df" not in st.session_state:
+        st.session_state.feedback_df = pd.DataFrame(
+            {
+                "Feature": [f["label"] for f in FEATURES],
+                "Key":     [f["key"]   for f in FEATURES],
+                "Rank (1=highest)": list(range(1, len(FEATURES)+1)),
+                "Value vs current (1–5)": [3]*len(FEATURES),
+                "Time saved per use (min)": [0]*len(FEATURES),
+            }
+        )
+
+    df_edit = st.data_editor(
+        st.session_state.feedback_df,
+        num_rows="fixed",
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Rank (1=highest)": st.column_config.NumberColumn(min_value=1, max_value=len(FEATURES), step=1),
+            "Value vs current (1–5)": st.column_config.NumberColumn(min_value=1, max_value=5, step=1),
+            "Time saved per use (min)": st.column_config.NumberColumn(min_value=0, max_value=120, step=1),
+            "Key": st.column_config.TextColumn(disabled=True),
+        }
+    )
+
+    # Optional participant code (helps distinguish users)
+    user_hint = st.text_input("Participant code (email/initials or code)", value=st.session_state.get("user_id",""))
+    if user_hint:
+        st.session_state["user_id"] = user_hint.strip()
+
+    comments = st.text_area("Any comments on usefulness, gaps, or adoption considerations?")
+
+    # Validate and submit
+    if st.button("Submit feature ranking & value feedback", type="primary"):
+        # Validate ranks are a permutation 1..N with no duplicates
+        ranks = df_edit["Rank (1=highest)"].astype(int).tolist()
+
 
     st.info("This section is a non-diagnostic draft. Please verify clinical details and local guideline applicability before submitting an imaging request.")
        
