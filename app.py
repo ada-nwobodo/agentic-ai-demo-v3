@@ -775,6 +775,12 @@ st.subheader("Overall experience")
 overall_rating = st.slider("How valuable was this demo overall?", 1, 10, 7, key="overall_rating")
 comments = st.text_area("Any additional comments or suggestions?")
 
+# 👇 NEW FIELD — participant identifier
+participant_id = st.text_input(
+    "Your initials or email (to link feedback)",
+    key="participant_id"
+)
+
 # Submit feedback
 if st.button("Submit Feedback", type="primary", key="submit_feedback"):
     try:
