@@ -5,3 +5,4 @@ scikit-learn
 wfdb
 neurokit2
 matplotlib
+supabase
