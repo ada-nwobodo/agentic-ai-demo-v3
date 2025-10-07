@@ -665,10 +665,7 @@ with st.expander("Request Imaging – summary of clinical information + relevant
 
     st.markdown(f"""
 **Clinical Summary (auto-generated draft)**  
-- {sex}, DOB {dob}. PMH: {problems}.  
-- Medications: {meds}.  
-- Allergies: {allergies}.  
-- {labs_line}  
+"75 year old female with intermittent chest pain + new onset paroxysmal AF. Previous history of CAD with CABG in 2018".  
 - Intended request: **Please review for appropriate imaging based on current presentation and PMH.**
 """)
 
