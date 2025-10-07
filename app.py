@@ -29,18 +29,7 @@ if "session_id" not in st.session_state:
     st.session_state["session_id"] = str(uuid.uuid4())
 
 
-# ---- Optional: manual smoke test to verify RLS + inserts ----
-with st.sidebar.expander("Supabase (dev only)"):
-    if st.button("Run Supabase smoke test"):
-        sb.table("demo_events").insert({
-            "session_id": st.session_state["session_id"],
-            "user_id": "anon",
-            "demo_name": "med_history_demo",
-            "event_type": "smoke_test",
-            "feature_name": "none",
-            "payload": {}
-        }).execute()
-        st.success("Inserted smoke-test row into demo_events ✅")
+
 
 
 # ---------------- Sidebar: patient context ----------------
